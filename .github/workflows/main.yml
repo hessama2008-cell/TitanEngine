@@ -10,16 +10,33 @@ jobs:
         with:
           java-version: '11'
           distribution: 'temurin'
-      - name: Build with Gradle
+
+      - name: Setup Android Project Structure
         run: |
-          if [ ! -f gradlew ]; then
-            gradle wrapper
-          fi
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          # إنشاء المجلدات الضرورية
+          mkdir -p app/src/main/cpp
+          mkdir -p app/src/main/res/values
+          
+          # نقل ملفاتك للأماكن التي يفهمها أندرويد
+          mv main.cpp app/src/main/cpp/
+          mv CMakeLists.txt app/src/main/cpp/
+          mv build.gradle app/
+          
+          # إنشاء ملف الهوية (AndroidManifest)
+          echo '<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hussam.titan"></manifest>' > app/src/main/AndroidManifest.xml
+          
+          # إنشاء ملف الإعدادات العام
+          echo "include ':app'" > settings.gradle
+          
+          # توليد ملفات التشغيل (Wrapper)
+          gradle wrapper
+
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
       - name: Upload APK
         uses: actions/upload-artifact@v3
         with:
-          name: Titan-Engine-App
+          name: Welcome-To-Hell-App
           path: app/build/outputs/apk/debug/*.apk
           
