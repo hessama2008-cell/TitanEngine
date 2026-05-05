@@ -1,42 +1,403 @@
-name: Build Titan APK
-on: [push]
+name: Build Titan Engine APK
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # للتشغيل اليدوي
+
+env:
+  NDK_VERSION: "25.2.9519653"
+  CMAKE_VERSION: "3.22.1"
+  BUILD_TOOLS_VERSION: "33.0.0"
+  SDK_COMPILE_VERSION: 33
+  SDK_MIN_VERSION: 24
+  SDK_TARGET_VERSION: 33
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
-      - name: set up JDK 11
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup JDK 17
         uses: actions/setup-java@v3
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
+          cache: 'gradle'
 
-      - name: Setup Android Project Structure
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-${{ env.SDK_COMPILE_VERSION }}
+            build-tools;${{ env.BUILD_TOOLS_VERSION }}
+            ndk;${{ env.NDK_VERSION }}
+            cmake;${{ env.CMAKE_VERSION }}
+
+      - name: Verify Required Source Files
         run: |
-          # إنشاء المجلدات الضرورية
+          echo "🔍 التحقق من وجود الملفات المطلوبة..."
+          
+          # قائمة الملفات المطلوبة
+          REQUIRED_FILES=(
+            "main.cpp"
+            "CMakeLists.txt"
+            "build.gradle"
+            "AndroidManifest.xml"
+          )
+          
+          # التحقق من وجود الملفات في المستودع
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ -f "$file" ]; then
+              echo "✅ تم العثور على: $file"
+            else
+              if [ -f "app/src/main/cpp/$file" ]; then
+                echo "✅ تم العثور على: app/src/main/cpp/$file"
+              elif [ -f "app/$file" ]; then
+                echo "✅ تم العثور على: app/$file"
+              else
+                echo "⚠️ تحذير: لم يتم العثور على $file - سيتم إنشاؤه إذا لزم الأمر"
+              fi
+            fi
+          done
+
+      - name: Setup Project Structure
+        run: |
+          echo "📁 إنشاء هيكل المشروع..."
+          
+          # إنشاء المجلدات الأساسية
           mkdir -p app/src/main/cpp
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/java/com/titan/engine
+          mkdir -p gradle/wrapper
           
-          # نقل ملفاتك للأماكن التي يفهمها أندرويد
-          mv main.cpp app/src/main/cpp/
-          mv CMakeLists.txt app/src/main/cpp/
-          mv build.gradle app/
+          # ============================================
+          # نقل الملفات الموجودة إلى أماكنها الصحيحة
+          # ============================================
           
-          # إنشاء ملف الهوية (AndroidManifest)
-          echo '<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hussam.titan"></manifest>' > app/src/main/AndroidManifest.xml
+          # نقل main.cpp
+          if [ -f "main.cpp" ]; then
+            cp main.cpp app/src/main/cpp/main.cpp
+            echo "✅ تم نقل main.cpp"
+          elif [ ! -f "app/src/main/cpp/main.cpp" ]; then
+            echo "❌ خطأ: main.cpp غير موجود!"
+            exit 1
+          fi
           
-          # إنشاء ملف الإعدادات العام
-          echo "include ':app'" > settings.gradle
+          # نقل CMakeLists.txt
+          if [ -f "CMakeLists.txt" ]; then
+            cp CMakeLists.txt app/src/main/cpp/CMakeLists.txt
+            echo "✅ تم نقل CMakeLists.txt"
+          elif [ ! -f "app/src/main/cpp/CMakeLists.txt" ]; then
+            echo "❌ خطأ: CMakeLists.txt غير موجود!"
+            exit 1
+          fi
           
-          # توليد ملفات التشغيل (Wrapper)
-          gradle wrapper
+          # نقل build.gradle
+          if [ -f "build.gradle" ]; then
+            cp build.gradle app/build.gradle
+            echo "✅ تم نقل build.gradle"
+          elif [ ! -f "app/build.gradle" ]; then
+            echo "❌ خطأ: build.gradle غير موجود!"
+            exit 1
+          fi
+          
+          # نقل أو إنشاء AndroidManifest.xml
+          if [ -f "AndroidManifest.xml" ]; then
+            cp AndroidManifest.xml app/src/main/AndroidManifest.xml
+            echo "✅ تم نقل AndroidManifest.xml"
+          elif [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+            cat > app/src/main/AndroidManifest.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.titan.engine">
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
+    <!-- أذونات التطبيق -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    
+    <!-- متطلبات OpenGL ES 3.0 -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen.multitouch" android:required="true" />
+    
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Titan Engine"
+        android:theme="@style/AppTheme"
+        android:hardwareAccelerated="true">
+        
+        <activity
+            android:name="android.app.NativeActivity"
+            android:label="Titan Engine"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:screenOrientation="landscape"
+            android:launchMode="singleInstance"
+            android:exported="true">
+            
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="titan_engine" />
+            
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
+            echo "✅ تم إنشاء AndroidManifest.xml تلقائياً"
+          fi
 
-      - name: Upload APK
+      - name: Create Resource Files
+        run: |
+          # إنشاء ملف strings.xml
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Titan Engine</string>
+</resources>
+EOF
+          
+          # إنشاء ملف styles.xml
+          cat > app/src/main/res/values/styles.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
+EOF
+          
+          echo "✅ تم إنشاء ملفات الموارد"
+
+      - name: Create Root build.gradle
+        run: |
+          cat > build.gradle << 'EOF'
+// Top-level build file for Titan Engine
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+EOF
+          
+          echo "✅ تم إنشاء build.gradle الرئيسي"
+
+      - name: Create settings.gradle
+        run: |
+          cat > settings.gradle << 'EOF'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "TitanEngine"
+include ':app'
+EOF
+          
+          echo "✅ تم إنشاء settings.gradle"
+
+      - name: Create Gradle Wrapper
+        run: |
+          # إنشاء gradle-wrapper.properties
+          mkdir -p gradle/wrapper
+          cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+          
+          # إنشاء gradlew script
+          cat > gradlew << 'EOF'
+#!/bin/sh
+# Titan Engine Gradle Wrapper Script
+exec gradle "$@"
+EOF
+          chmod +x gradlew
+          
+          echo "✅ تم إنشاء Gradle Wrapper"
+
+      - name: Setup CMake NDK Environment Variables
+        run: |
+          echo "🔧 إعداد متغيرات البيئة..."
+          
+          # تعيين مسار NDK
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          
+          # تعيين مسار CMake
+          CMAKE_PATH="$ANDROID_HOME/cmake/${{ env.CMAKE_VERSION }}/bin"
+          echo "$CMAKE_PATH" >> $GITHUB_PATH
+          
+          echo "✅ ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          echo "✅ CMake Path: $CMAKE_PATH"
+
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Native Code Validation
+        run: |
+          echo "🔨 فحص صحة الكود الأصلي..."
+          
+          # فحص وجود المكتبات المطلوبة في CMakeLists.txt
+          if grep -q "find_library.*android" app/src/main/cpp/CMakeLists.txt; then
+            echo "✅ مكتبة Android موجودة في CMakeLists.txt"
+          else
+            echo "⚠️ تحذير: مكتبة Android غير موجودة في CMakeLists.txt"
+          fi
+          
+          if grep -q "find_library.*GLESv3" app/src/main/cpp/CMakeLists.txt; then
+            echo "✅ مكتبة OpenGL ES 3.0 موجودة في CMakeLists.txt"
+          else
+            echo "❌ خطأ: مكتبة OpenGL ES 3.0 مطلوبة!"
+            exit 1
+          fi
+
+      - name: Build APK with Gradle
+        run: |
+          echo "🚀 بدء عملية بناء APK..."
+          
+          # تنظيف المشروع أولاً
+          ./gradlew clean --no-daemon
+          
+          # بناء نسخة Debug
+          ./gradlew app:assembleDebug --no-daemon --stacktrace
+          
+          # بناء نسخة Release
+          ./gradlew app:assembleRelease --no-daemon --stacktrace
+          
+          echo "✅ تم بناء APK بنجاح!"
+
+      - name: Verify APK Generation
+        run: |
+          echo "📋 التحقق من إنشاء ملفات APK..."
+          
+          # البحث عن ملفات APK
+          if find app/build/outputs/apk -name "*.apk" | grep -q .; then
+            echo "✅ تم العثور على ملفات APK:"
+            find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+          else
+            echo "❌ خطأ: لم يتم العثور على ملفات APK!"
+            exit 1
+          fi
+
+      - name: Generate Build Report
+        run: |
+          echo "📊 إنشاء تقرير البناء..."
+          
+          # إنشاء ملف التقرير
+          cat > BUILD_REPORT.md << EOF
+# Titan Engine - Build Report
+
+## معلومات البناء
+- **التاريخ**: $(date '+%Y-%m-%d %H:%M:%S')
+- **الفرع**: ${{ github.ref_name }}
+- **رقم البناء**: ${{ github.run_number }}
+- **نظام التشغيل**: ${{ runner.os }}
+
+## إصدارات الأدوات
+- **JDK**: 17
+- **NDK**: ${{ env.NDK_VERSION }}
+- **CMake**: ${{ env.CMAKE_VERSION }}
+- **Build Tools**: ${{ env.BUILD_TOOLS_VERSION }}
+
+## المخرجات
+$(find app/build/outputs/apk -name "*.apk" -exec echo "- {}" \;)
+
+## حالة البناء
+✅ نجاح - تم إنشاء APK بنجاح
+EOF
+          
+          echo "✅ تم إنشاء تقرير البناء"
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v3
         with:
-          name: Welcome-To-Hell-App
-          path: app/build/outputs/apk/debug/*.apk
-          
+          name: Titan-Engine-Debug-APK
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            BUILD_REPORT.md
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: Titan-Engine-Release-APK
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Titan Engine v1.0.${{ github.run_number }}
+          body_path: BUILD_REPORT.md
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Status Notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "🎉 Titan Engine APK Build Completed Successfully!"
+            echo "📱 Debug APK and Release APK ready for download"
+          else
+            echo "❌ Build Failed! Check the logs above for errors"
+            exit 1
+          fi
